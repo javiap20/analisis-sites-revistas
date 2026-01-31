@@ -298,12 +298,12 @@ h1 { text-align: center; font-size: 1.5rem; margin: 20px 0; }
       </div>
 
       <div class="summarySection">
-        <div class="summaryTitle marca">Marca</div>
+        <div class="summaryTitle marca">Marca (desglosada por familia Sponsorship, Social y Curated)</div>
         <ul id="advBrandsBase" class="itemList marca"></ul>
         <button id="brandsToggleBtn" class="toggleBtn" style="display:none">Ver más marcas</button>
       </div>
       <div class="summarySection">
-        <div class="summaryTitle marca">Marca</div>
+        <div class="summaryTitle marca">Marca (desglosada por familia Sponsorship, Social y Curated)</div>
         <ul id="advBrandsComp" class="itemList marca"></ul>
       </div>
 
@@ -541,6 +541,10 @@ function calcNetting(data) {
 
 function groupSumGeneric(data, keyField) {
   const map = new Map();
+  
+  // Definimos las únicas familias que queremos analizar
+  const FAMILIAS_PERMITIDAS = ["Sponsorship", "Social Networks", "Curated"];
+
   data.forEach(d => { 
     const k = d[keyField] || "Desconocido"; 
     if (!map.has(k)) map.set(k, { sum: 0, items: [] });
@@ -551,38 +555,40 @@ function groupSumGeneric(data, keyField) {
 
   return Array.from(map.entries()).map(([label, info]) => {
     const subGroups = {};
+    let totalSumFiltrada = 0; // Para recalcular el total de la marca solo con lo permitido
     
     info.items.forEach(item => {
       let pName = item.Product;
-      let fName = item.Familia;
-      const sLimpio = limpiarSite(item.Site); // Limpiamos el nombre aquí
+      let fName = item.Familia || "Otros";
+      const sLimpio = limpiarSite(item.Site);
       
-      if (!PRODUCTOS_PERMITIDOS.includes(pName)) {
-        pName = "Display + Programática";
-        fName = "Otros";
+      // FILTRO: Solo si la familia está en nuestra lista de permitidas
+      if (FAMILIAS_PERMITIDAS.includes(fName)) {
+        const subKey = `${pName} - ${sLimpio}`;
+        
+        if (!subGroups[subKey]) {
+          subGroups[subKey] = { sum: 0, count: 0, siteLimpio: sLimpio, productName: pName, familia: fName };
+        }
+        subGroups[subKey].sum += item.ingreso;
+        subGroups[subKey].count++;
+        totalSumFiltrada += item.ingreso; // Sumamos al total de este bloque (Marca/Comercial)
       }
-
-      const subKey = `${pName} - ${sLimpio}`;
-      if (!subGroups[subKey]) {
-        subGroups[subKey] = { sum: 0, count: 0, siteLimpio: sLimpio, productName: pName, familia: fName };
-      }
-      subGroups[subKey].sum += item.ingreso;
-      subGroups[subKey].count++;
     });
 
-    const breakdown = Object.entries(subGroups)
-      .map(([key, val]) => ({
-        text: `${val.productName} - <i>${val.siteLimpio}</i>`, // Site en cursiva
+    const breakdown = Object.entries(subGroups).map(([key, val]) => ({
+        text: `${val.productName} - <i>${val.siteLimpio}</i>`,
         count: val.count,
         avg: val.sum / val.count,
-        siteId: val.siteLimpio, // Para comparar con los precios de referencia
+        siteId: val.siteLimpio,
         productName: val.productName,
         familia: val.familia
-      }))
-      .sort((a, b) => a.productName.localeCompare(b.productName)); 
+      })).sort((a, b) => a.productName.localeCompare(b.productName)); 
 
-    return { label, sum: info.sum, breakdown };
-  }).sort((a, b) => b.sum - a.sum);
+    // Devolvemos el objeto solo si tiene productos permitidos
+    return { label, sum: totalSumFiltrada, breakdown };
+  })
+  .filter(item => item.breakdown.length > 0) // Eliminamos las Marcas que no tengan nada de esas 3 familias
+  .sort((a, b) => b.sum - a.sum);
 }
 
 function groupSumMonths(data) {
