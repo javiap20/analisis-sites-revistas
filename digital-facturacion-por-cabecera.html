@@ -398,6 +398,44 @@ const MONTH_INITIALS = ["E", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "
 let rawData = [];
 let isUnlocked = false;
 
+const REF_STANDARD = {
+  "caranddriver": 5250, "cosmopolitan": 7500, "diezminutos": 5250,
+  "elle": 9000, "elledecor": 5250, "esquire": 7500,
+  "fotogramas": 6000, "harpersbazaar": 7500, "menshealth": 6000,
+  "micasarevista": 5250, "nuevo-estilo": 5250, "runnersworld": 5250,
+  "womenshealthmag": 6000
+};
+
+const REF_VIDEO = {
+  "caranddriver": 7600, "cosmopolitan": 10400, "diezminutos": 7600,
+  "elle": 12000, "elledecor": 7600, "esquire": 10400,
+  "fotogramas": 8400, "harpersbazaar": 10400, "menshealth": 8400,
+  "micasarevista": 7600, "nuevo-estilo": 7600, "runnersworld": 7600,
+  "womenshealthmag": 8400
+};
+
+// Configuración de familias y colores para el desglose
+const FAMILIA_COLORS = {
+  "Sponsorship": "#38bdf8",     // Azul claro
+  "Curated": "#fbbf24",         // Ámbar/Amarillo
+  "Social Networks": "#a855f7", // Morado
+  "Otros": "#94a3b8"            // Gris para Display+Prog
+};
+
+const PRODUCTOS_PERMITIDOS = [
+  "Branded Content", "Branded Content Sindicated", "Branded Content video",
+  "Curated", "Instagram (Orgánico)", "Instagram (sponsored Post)",
+  "Redes sociales organicas", "Story Teller (sponsored Post)",
+  "Tik Tok (Orgánico)", "Tik Tok (sponsored Post)",
+  "Varios redes sociales", "Varios redes sociales (sponsored Post)"
+];
+
+function limpiarSite(url) {
+  if(!url) return "Desconocido";
+  // Quita www., .com, .es y todo lo que venga después de la extensión
+  return url.replace(/^(www\.)?/, '').split('.')[0];
+}
+
 function checkPass() {
     if(document.getElementById('passInput').value === "mascara") {
         isUnlocked = true;
@@ -503,8 +541,48 @@ function calcNetting(data) {
 
 function groupSumGeneric(data, keyField) {
   const map = new Map();
-  data.forEach(d => { const k = d[keyField] || "Desconocido"; map.set(k, (map.get(k) || 0) + d.ingreso); });
-  return Array.from(map.entries()).map(([label, sum]) => ({ label, sum })).sort((a,b) => b.sum - a.sum);
+  data.forEach(d => { 
+    const k = d[keyField] || "Desconocido"; 
+    if (!map.has(k)) map.set(k, { sum: 0, items: [] });
+    const entry = map.get(k);
+    entry.sum += d.ingreso;
+    entry.items.push(d);
+  });
+
+  return Array.from(map.entries()).map(([label, info]) => {
+    const subGroups = {};
+    
+    info.items.forEach(item => {
+      let pName = item.Product;
+      let fName = item.Familia;
+      const sLimpio = limpiarSite(item.Site); // Limpiamos el nombre aquí
+      
+      if (!PRODUCTOS_PERMITIDOS.includes(pName)) {
+        pName = "Display + Programática";
+        fName = "Otros";
+      }
+
+      const subKey = `${pName} - ${sLimpio}`;
+      if (!subGroups[subKey]) {
+        subGroups[subKey] = { sum: 0, count: 0, siteLimpio: sLimpio, productName: pName, familia: fName };
+      }
+      subGroups[subKey].sum += item.ingreso;
+      subGroups[subKey].count++;
+    });
+
+    const breakdown = Object.entries(subGroups)
+      .map(([key, val]) => ({
+        text: `${val.productName} - <i>${val.siteLimpio}</i>`, // Site en cursiva
+        count: val.count,
+        avg: val.sum / val.count,
+        siteId: val.siteLimpio, // Para comparar con los precios de referencia
+        productName: val.productName,
+        familia: val.familia
+      }))
+      .sort((a, b) => a.productName.localeCompare(b.productName)); 
+
+    return { label, sum: info.sum, breakdown };
+  }).sort((a, b) => b.sum - a.sum);
 }
 
 function groupSumMonths(data) {
@@ -545,28 +623,75 @@ function fillBrandsMirrorWithLimit(idBase, idComp, itemsBase, itemsComp) {
   const ulComp = document.getElementById(idComp);
   const btn = document.getElementById('brandsToggleBtn');
   ulBase.innerHTML = ""; ulComp.innerHTML = "";
+  
   const baseLabels = itemsBase.map(i => i.label);
   baseLabels.forEach((label, idx) => {
     const dataBase = itemsBase.find(i => i.label === label);
     const dataComp = itemsComp.find(i => i.label === label);
+    
     const liB = document.createElement('li');
-    let contentB = `${dataBase.label} — <span class="amount">${formatCurrency(dataBase.sum)}</span>`;
+    let contentB = `<strong>${dataBase.label}</strong> — <span class="amount">${formatCurrency(dataBase.sum)}</span>`;
+    
     if (dataComp && dataComp.sum > 0) {
       const pct = Math.round(((dataBase.sum / dataComp.sum) - 1) * 100);
       contentB += ` — <span class="pct ${pct < 0 ? 'neg' : 'pos'}">${pct > 0 ? '+' : ''}${pct}%</span>`;
     }
+
+    if (dataBase.breakdown) {
+      dataBase.breakdown.forEach(sub => {
+        let isBelow = false;
+        const pNameLower = sub.productName.toLowerCase();
+        const famColor = FAMILIA_COLORS[sub.familia] || "#94a3b8";
+
+        // Reglas de alerta usando el site limpio
+        if (pNameLower === "branded content video") {
+          isBelow = REF_VIDEO[sub.siteId] && sub.avg < REF_VIDEO[sub.siteId];
+        } else if (["branded content", "branded content syndicated", "curated"].includes(pNameLower)) {
+          isBelow = REF_STANDARD[sub.siteId] && sub.avg < REF_STANDARD[sub.siteId];
+        }
+
+        // Estilo si el presupuesto es bajo
+        const alertStyle = isBelow ? 'background: rgba(248,113,113,0.2); font-weight: bold; border: 1px solid #f87171;' : '';
+        const alertIcon = isBelow ? '⚠️ ' : '';
+        const textoActiv = sub.count === 1 ? "activ." : "activ."; // Usamos siempre activ. como pediste
+        
+        contentB += `
+          <div class="sub-item" style="margin-left: 18px; font-size: 0.82em; margin-top: 4px; border-left: 3px solid ${famColor}; padding-left: 8px; line-height: 1.4;">
+            <div style="color: ${famColor}; ${alertStyle} padding: 2px 5px; border-radius: 3px; display: inline-block;">
+              <span style="font-weight: bold; text-transform: uppercase; font-size: 0.9em;">${sub.familia}:</span> 
+              ${alertIcon}${sub.text} (${sub.count} ${textoActiv}) — ${formatCurrency(sub.avg)} 
+              <small style="opacity: 0.8; font-style: italic;">(presu medio)</small>
+            </div>
+          </div>`;
+      });
+    }
+
     liB.innerHTML = contentB;
+
+    // Renderizado columna comparativa (derecha)
     const liC = document.createElement('li');
-    if (dataComp) liC.innerHTML = `${dataComp.label} — <span class="amount">${formatCurrency(dataComp.sum)}</span>`;
-    else { liC.className = "empty-item"; liC.innerHTML = `${label} — 0€`; }
+    if (dataComp) {
+        liC.innerHTML = `<strong>${dataComp.label}</strong> — <span class="amount">${formatCurrency(dataComp.sum)}</span>`;
+    } else { 
+        liC.className = "empty-item"; 
+        liC.innerHTML = `${label} — 0€`; 
+    }
+
     if (idx >= currentBrandsLimit) { liB.style.display = 'none'; liC.style.display = 'none'; }
-    ulBase.appendChild(liB); ulComp.appendChild(liC);
+    ulBase.appendChild(liB); 
+    ulComp.appendChild(liC);
   });
+
   if (baseLabels.length > currentBrandsLimit) {
     btn.style.display = 'block';
     btn.textContent = `Ver 25 más (${baseLabels.length - currentBrandsLimit} restantes)`;
-    btn.onclick = () => { currentBrandsLimit += 25; fillBrandsMirrorWithLimit(idBase, idComp, itemsBase, itemsComp); };
-  } else { btn.style.display = 'none'; }
+    btn.onclick = () => { 
+      currentBrandsLimit += 25; 
+      fillBrandsMirrorWithLimit(idBase, idComp, itemsBase, itemsComp); 
+    };
+  } else { 
+    btn.style.display = 'none'; 
+  }
 }
 
 function renderMonthsChart(baseMonthsArr, compMonthsArr, showComparison = true) {
@@ -822,3 +947,7 @@ function render(){
 </script>
 </body>
 </html>
+
+
+
+
