@@ -776,6 +776,7 @@ function calculateProjection() {
     
     document.getElementById('estYearLabel').textContent = currentYear;
 
+    // Ajuste de nombres de filtros según tu código
     const site = fSite.value.toLowerCase();
     const prod = fProduct.value.toLowerCase();
     const sec = fSector.value.toLowerCase();
@@ -784,28 +785,20 @@ function calculateProjection() {
 
     const aplicarFiltros = (data) => data.filter(d =>
         (adv === "TODOS" || d.Anunciante === adv) &&
-        (site === "todos" || d.Site === site) &&
-        (prod === "todos" || d.Product.toLowerCase() === prod) &&
-        (sec === "todos" || d.Sector.toLowerCase() === sec) &&
-        (area === "todos" || d.Area.toLowerCase() === area)
+        (site === "todos" || (d.Site && d.Site.toLowerCase() === site)) &&
+        (prod === "todos" || (d.Product && d.Product.toLowerCase() === prod)) &&
+        (sec === "todos" || (d.Sector && d.Sector.toLowerCase() === sec)) &&
+        (area === "todos" || (d.Area && d.Area.toLowerCase() === area))
     );
 
     const dataCurrentYear = aplicarFiltros(rawData.filter(d => d.Año === currentYear));
     const dataPrevYear = aplicarFiltros(rawData.filter(d => d.Año === prevYear));
 
-    // Cierre total real del año pasado para comparar porcentajes
     const totalPrevYear = dataPrevYear.reduce((acc, d) => acc + d.ingreso, 0);
 
     let realHoyTotal = 0;
     let estimacionFinal = 0;
     let tableHTML = "";
-
-    const progFamilies = [
-        "programatica display directo", 
-        "programatica display indirecto", 
-        "video programatico directo", 
-        "video programatico indirecto"
-    ];
 
     MONTHS.forEach((m, idx) => {
         const mesDataActual = dataCurrentYear.filter(d => d.Mes === m);
@@ -818,24 +811,20 @@ function calculateProjection() {
         let metodo = "";
 
         if (idx < currentMonthIdx) {
-            // MESES CERRADOS: Real de este año
+            // 1. MES CERRADO: Dato real tal cual
             mesEstimado = factMesActual;
             metodo = "Mes Cerrado (Real)";
             realHoyTotal += factMesActual;
         } 
         else if (idx === currentMonthIdx) {
-            // MES EN CURSO: Previsión lineal + Programática año pasado
-            const previsionLineal = (factMesActual / dayOfMonth) * daysInMonth;
-            const progMesPasado = mesDataPasado.filter(d => 
-                progFamilies.includes(d.Familia.toLowerCase())
-            ).reduce((acc, d) => acc + d.ingreso, 0);
-            
-            mesEstimado = previsionLineal + progMesPasado;
-            metodo = "Real + Proy. Lineal + Prog. '25";
+            // 2. MES EN CURSO: Real a hoy proyectado a final de mes
+            // Fórmula: (Lo facturado / días transcurridos) * total días del mes
+            mesEstimado = dayOfMonth > 0 ? (factMesActual / dayOfMonth) * daysInMonth : 0;
+            metodo = "Real + Proy. Lineal";
             realHoyTotal += factMesActual;
         } 
         else {
-            // MESES FUTUROS: Histórico año anterior + 3%
+            // 3. MESES FUTUROS: Histórico año anterior + 3%
             mesEstimado = factMesPasado * 1.03;
             metodo = "Histórico '25 + 3%";
         }
@@ -844,7 +833,7 @@ function calculateProjection() {
         tableHTML += `<tr><td>${m}</td><td>${metodo}</td><td>${formatCurrency(mesEstimado)}</td></tr>`;
     });
 
-    // Calcular badge de crecimiento
+    // Actualizar Badge
     const pctBadge = document.getElementById('valEstPct');
     if (totalPrevYear > 0) {
         const diff = ((estimacionFinal / totalPrevYear) - 1) * 100;
@@ -854,10 +843,15 @@ function calculateProjection() {
         pctBadge.textContent = "";
     }
 
+    // Totales inferiores
     document.getElementById('valRealHoy').textContent = formatCurrency(realHoyTotal);
     document.getElementById('valEstFinal').textContent = formatCurrency(estimacionFinal);
     document.getElementById('estimateTableBody').innerHTML = tableHTML + 
-        `<tr><td>TOTAL PROYECTADO</td><td>Cierre Estimado 31 Dic</td><td>${formatCurrency(estimacionFinal)}</td></tr>`;
+        `<tr style="background:rgba(255,255,255,0.1); font-weight:bold;">
+            <td>TOTAL PROYECTADO</td>
+            <td>Cierre Estimado 31 Dic</td>
+            <td>${formatCurrency(estimacionFinal)}</td>
+        </tr>`;
 }
 
 function render(){

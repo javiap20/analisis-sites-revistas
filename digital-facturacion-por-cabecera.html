@@ -768,7 +768,7 @@ function drawMiniChart(canvasId, baseData, compData, showComp) {
   drawLine(baseData, '#38bdf8');
 }
 
-/* Lógica de Estimación Final */
+/* Lógica de Estimación Final Corregida */
 function calculateProjection() {
     const today = new Date();
     const currentYear = today.getFullYear().toString();
@@ -795,11 +795,9 @@ function calculateProjection() {
 
     const dataCurrentYear = aplicarFiltros(rawData.filter(d => d.Año === currentYear));
     const dataPrevYear = aplicarFiltros(rawData.filter(d => d.Año === prevYear));
-
-    // Cierre total real del año pasado para comparar porcentajes
     const totalPrevYear = dataPrevYear.reduce((acc, d) => acc + d.ingreso, 0);
 
-    let realHoyTotal = 0;
+    let realAcumuladoHoy = 0; 
     let estimacionFinal = 0;
     let tableHTML = "";
 
@@ -821,24 +819,30 @@ function calculateProjection() {
         let metodo = "";
 
         if (idx < currentMonthIdx) {
-            // MESES CERRADOS: Real de este año
             mesEstimado = factMesActual;
             metodo = "Mes Cerrado (Real)";
-            realHoyTotal += factMesActual;
+            realAcumuladoHoy += factMesActual;
         } 
         else if (idx === currentMonthIdx) {
-            // MES EN CURSO: Previsión lineal + Programática año pasado
-            const previsionLineal = (factMesActual / dayOfMonth) * daysInMonth;
-            const progMesPasado = mesDataPasado.filter(d => 
-                progFamilies.includes(d.Familia.toLowerCase())
-            ).reduce((acc, d) => acc + d.ingreso, 0);
+            // --- CORRECCIÓN CLAVE AQUÍ ---
+            // Separamos lo que es Programática de lo que no (Venta Directa/Branded)
+            const actualProg = mesDataActual.filter(d => progFamilies.includes(d.Familia.toLowerCase()))
+                                          .reduce((acc, d) => acc + d.ingreso, 0);
+            const actualDirecta = factMesActual - actualProg;
+
+            // La Venta Directa NO se proyecta linealmente (se asume que ya está en el Excel)
+            // La Programática SÍ se proyecta según los días transcurridos
+            const progProyectada = (actualProg / dayOfMonth) * daysInMonth;
             
-            mesEstimado = previsionLineal + progMesPasado;
-            metodo = "Real + Proy. Lineal + Prog. '25";
-            realHoyTotal += factMesActual;
+            // Programática histórica del año pasado para compensar falta de datos en tiempo real
+            const progHistorica = mesDataPasado.filter(d => progFamilies.includes(d.Familia.toLowerCase()))
+                                             .reduce((acc, d) => acc + d.ingreso, 0);
+
+            mesEstimado = actualDirecta + Math.max(progProyectada, progHistorica);
+            metodo = "Directa Real + Proy. Prog / Histórica";
+            realAcumuladoHoy += factMesActual;
         } 
         else {
-            // MESES FUTUROS: Histórico año anterior + 3%
             mesEstimado = factMesPasado * 1.03;
             metodo = "Histórico '25 + 3%";
         }
@@ -847,21 +851,21 @@ function calculateProjection() {
         tableHTML += `<tr><td>${m}</td><td>${metodo}</td><td>${formatCurrency(mesEstimado)}</td></tr>`;
     });
 
-    // Calcular badge de crecimiento
+    // Actualización de UI
     const pctBadge = document.getElementById('valEstPct');
     if (totalPrevYear > 0) {
         const diff = ((estimacionFinal / totalPrevYear) - 1) * 100;
         pctBadge.textContent = (diff > 0 ? "↑ " : "↓ ") + diff.toFixed(1) + "%";
         pctBadge.className = "pct-badge " + (diff >= 0 ? "pct-pos" : "pct-neg");
-    } else {
-        pctBadge.textContent = "";
     }
 
-    document.getElementById('valRealHoy').textContent = formatCurrency(realHoyTotal);
+    document.getElementById('valRealHoy').textContent = formatCurrency(realAcumuladoHoy);
     document.getElementById('valEstFinal').textContent = formatCurrency(estimacionFinal);
     document.getElementById('estimateTableBody').innerHTML = tableHTML + 
         `<tr><td>TOTAL PROYECTADO</td><td>Cierre Estimado 31 Dic</td><td>${formatCurrency(estimacionFinal)}</td></tr>`;
 }
+
+
 
 function render(){
   if (this && this.id !== "brandsToggleBtn") { currentBrandsLimit = 25; }
